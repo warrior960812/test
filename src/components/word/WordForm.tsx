@@ -12,6 +12,16 @@ type WordInput = {
   sourceArticleUrl?: string;
 };
 
+interface DictMeaning {
+  partOfSpeech: string;
+  definitions: { definition: string; example?: string }[];
+}
+
+interface DictResult {
+  word: string;
+  meanings: DictMeaning[];
+}
+
 interface WordFormProps {
   initial?: Partial<WordInput>;
   onSubmit: (data: WordInput) => void;
@@ -28,6 +38,41 @@ export function WordForm({ initial, onSubmit, onCancel, submitLabel = 'Save', co
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [tagInput, setTagInput] = useState('');
   const [error, setError] = useState('');
+  const [lookupState, setLookupState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [dictResults, setDictResults] = useState<DictMeaning[]>([]);
+  const [showPicker, setShowPicker] = useState(false);
+
+  async function lookupWord() {
+    const w = word.trim();
+    if (!w) { setError('Enter a word first'); return; }
+    setError('');
+    setLookupState('loading');
+    setShowPicker(false);
+    try {
+      const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(w)}`);
+      if (!res.ok) throw new Error('not found');
+      const data: DictResult[] = await res.json();
+      const meanings = data[0]?.meanings ?? [];
+      if (meanings.length === 0) throw new Error('no meanings');
+      setDictResults(meanings);
+      setShowPicker(true);
+      setLookupState('idle');
+    } catch {
+      setLookupState('error');
+      setDictResults([]);
+    }
+  }
+
+  function applyMeaning(meaning: DictMeaning) {
+    const def = meaning.definitions[0]?.definition ?? '';
+    const exs = meaning.definitions
+      .map((d) => d.example)
+      .filter((e): e is string => Boolean(e))
+      .slice(0, 3);
+    setDefinition(`(${meaning.partOfSpeech}) ${def}`);
+    if (exs.length > 0) setExamples(exs);
+    setShowPicker(false);
+  }
 
   function addExample() {
     setExamples([...examples, '']);
@@ -80,14 +125,49 @@ export function WordForm({ initial, onSubmit, onCancel, submitLabel = 'Save', co
 
       <div className="form-group">
         <label className="form-label">Word *</label>
-        <input
-          className="form-input"
-          value={word}
-          onChange={(e) => setWord(e.target.value)}
-          placeholder="e.g. ephemeral"
-          autoFocus={!compact}
-        />
+        <div className="word-input-row">
+          <input
+            className="form-input"
+            value={word}
+            onChange={(e) => { setWord(e.target.value); setShowPicker(false); setDictResults([]); }}
+            placeholder="e.g. ephemeral"
+            autoFocus={!compact}
+          />
+          <button
+            type="button"
+            className="dict-lookup-btn"
+            onClick={lookupWord}
+            disabled={lookupState === 'loading' || !word.trim()}
+            title="Look up definition"
+          >
+            {lookupState === 'loading' ? '...' : '🔍 Look up'}
+          </button>
+        </div>
+        {lookupState === 'error' && (
+          <p className="dict-error">Word not found in dictionary. Enter definition manually.</p>
+        )}
       </div>
+
+      {/* Dictionary results picker */}
+      {showPicker && dictResults.length > 0 && (
+        <div className="dict-picker">
+          <p className="dict-picker-label">Choose a meaning to auto-fill:</p>
+          {dictResults.map((m, i) => (
+            <button
+              key={i}
+              type="button"
+              className="dict-meaning-btn"
+              onClick={() => applyMeaning(m)}
+            >
+              <span className="dict-pos">{m.partOfSpeech}</span>
+              <span className="dict-def">{m.definitions[0]?.definition}</span>
+            </button>
+          ))}
+          <button type="button" className="btn-text" onClick={() => setShowPicker(false)}>
+            Cancel
+          </button>
+        </div>
+      )}
 
       <div className="form-group">
         <label className="form-label">Definition *</label>
@@ -95,7 +175,7 @@ export function WordForm({ initial, onSubmit, onCancel, submitLabel = 'Save', co
           className="form-input form-textarea"
           value={definition}
           onChange={(e) => setDefinition(e.target.value)}
-          placeholder="What does it mean?"
+          placeholder="What does it mean? (or use Look up above)"
           rows={compact ? 2 : 3}
         />
       </div>
